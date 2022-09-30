@@ -1,4 +1,4 @@
-module github.com/russellhaering/goxmldsig
+module github.com/austdev/goxmldsig
 
 go 1.18
 
