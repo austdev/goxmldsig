@@ -10,8 +10,9 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/austdev/goxmldsig/etreeutils"
+
 	"github.com/beevik/etree"
-	"github.com/russellhaering/goxmldsig/etreeutils"
 )
 
 type SigningContext struct {
@@ -96,7 +97,6 @@ func (ctx *SigningContext) constructSignedInfo(el *etree.Element, enveloped bool
 	} else {
 		reference.CreateAttr(URIAttr, "#"+dataId)
 	}
-
 
 	// /SignedInfo/Reference/Transforms
 	transforms := ctx.createNamespacedElement(reference, TransformsTag)
