@@ -14,6 +14,10 @@ import (
 	"github.com/russellhaering/goxmldsig/etreeutils"
 )
 
+type CryptoSigner interface {
+	Signer() (signer crypto.Signer, err error)
+}
+
 type SigningContext struct {
 	Hash          crypto.Hash
 	KeyStore      X509KeyStore
@@ -241,12 +245,15 @@ func (ctx *SigningContext) signing(sig *etree.Element, sigNSCtx etreeutils.NSCon
 		return nil, err
 	}
 
-	key, cert, err := ctx.KeyStore.GetKeyPair()
-	if err != nil {
-		return nil, err
+	var certs [][]byte
+	var key crypto.Signer
+	if cs, ok := ctx.KeyStore.(CryptoSigner); ok {
+		key, err = cs.Signer()
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	certs := [][]byte{cert}
 	if cs, ok := ctx.KeyStore.(X509ChainStore); ok {
 		certs, err = cs.GetChain()
 		if err != nil {
@@ -254,7 +261,19 @@ func (ctx *SigningContext) signing(sig *etree.Element, sigNSCtx etreeutils.NSCon
 		}
 	}
 
-	rawSignature, err := rsa.SignPKCS1v15(rand.Reader, key, ctx.Hash, digest)
+	if key == nil || len(certs) == 0 {
+		// fall back to old interface
+		RSAkey, cert, err := ctx.KeyStore.GetKeyPair()
+		if err != nil {
+			return nil, err
+		}
+		if len(certs) == 0 {
+			certs = [][]byte{cert}
+		}
+		key = RSAkey
+	}
+
+	rawSignature, err := key.Sign(rand.Reader, digest, ctx.Hash)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +367,13 @@ func (ctx *SigningContext) SignString(content string) ([]byte, error) {
 	digest := hash.Sum(nil)
 
 	var signature []byte
-	if key, _, err := ctx.KeyStore.GetKeyPair(); err != nil {
+	if cs, ok := ctx.KeyStore.(CryptoSigner); ok {
+		if key, err := cs.Signer(); err != nil {
+			return nil, fmt.Errorf("unable to fetch crypto.Signer interface: %v", err)
+		} else if signature, err = key.Sign(rand.Reader, digest, ctx.Hash); err != nil {
+			return nil, fmt.Errorf("error signing: %v", err)
+		}
+	} else if key, _, err := ctx.KeyStore.GetKeyPair(); err != nil {
 		return nil, fmt.Errorf("unable to fetch key for signing: %v", err)
 	} else if signature, err = rsa.SignPKCS1v15(rand.Reader, key, ctx.Hash, digest); err != nil {
 		return nil, fmt.Errorf("error signing: %v", err)
