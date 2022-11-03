@@ -3,8 +3,6 @@ package dsig
 import (
 	"bytes"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
@@ -201,36 +199,12 @@ func (ctx *ValidationContext) verifySignedInfo(sig *types.Signature, cert *x509.
 	}
 
 	signatureMethodId := sig.SignedInfo.SignatureMethod.Algorithm
-	signatureAlgorithm, ok := signatureMethodsByIdentifier[signatureMethodId]
+	algo, ok := x509SignatureAlgorithmByIdentifier[signatureMethodId]
 	if !ok {
 		return fmt.Errorf("%w: signature method: %s", ErrUnsupportedMethod, signatureMethodId)
 	}
 
-	hash := signatureAlgorithm.New()
-	_, err = hash.Write(canonical)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrUnsupportedMethod, err)
-	}
-
-	hashed := hash.Sum(nil)
-
-	// Verify that the private key matching the public key from the cert was what was used to sign the 'SignedInfo' and produce the 'SignatureValue'
-	switch pubKey := cert.PublicKey.(type) {
-	case *rsa.PublicKey:
-		err = rsa.VerifyPKCS1v15(pubKey, signatureAlgorithm, hashed[:], decodedSignature)
-	case *ecdsa.PublicKey:
-		if !ecdsa.VerifyASN1(pubKey, hashed[:], decodedSignature) {
-			err = errors.New("ECDSA verification error")
-		}
-	default:
-		return fmt.Errorf("%w: invalid public key", ErrBadCertificate)
-	}
-
-	if err != nil {
-		return fmt.Errorf("%w [%v]", ErrInvalidDigest, err)
-	}
-
-	return nil
+	return cert.CheckSignature(algo, canonical, decodedSignature)
 }
 
 func (ctx *ValidationContext) validateSignature(el *etree.Element, sig *types.Signature, cert *x509.Certificate) (*etree.Element, error) {
