@@ -2,10 +2,10 @@ package dsig
 
 import (
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/rsa"
-	_ "crypto/sha1"
-	_ "crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -36,13 +36,33 @@ func NewDefaultSigningContext(ks X509KeyStore) *SigningContext {
 	}
 }
 
+func (ctx *SigningContext) getPublicKeyAlgorithm() x509.PublicKeyAlgorithm {
+	if cs, ok := ctx.KeyStore.(CryptoSigner); ok {
+		if key, err := cs.Signer(); err == nil {
+			switch key.Public().(type) {
+			case *ecdsa.PublicKey:
+				return x509.ECDSA
+			case *rsa.PublicKey:
+				return x509.RSA
+			}
+		}
+		return x509.UnknownPublicKeyAlgorithm
+	}
+	return x509.RSA
+}
+
 func (ctx *SigningContext) SetSignatureMethod(algorithmID string) error {
-	hash, ok := signatureMethodsByIdentifier[algorithmID]
+	info, ok := signatureMethodByIdentifiers[algorithmID]
 	if !ok {
 		return fmt.Errorf("unknown SignatureMethod: %s", algorithmID)
 	}
 
-	ctx.Hash = hash
+	algo := ctx.getPublicKeyAlgorithm()
+	if info.PublicKeyAlgorithm != algo {
+		return fmt.Errorf("SignatureMethod %s is incompatible with %s key", algorithmID, algo)
+	}
+
+	ctx.Hash = info.Hash
 
 	return nil
 }
@@ -341,7 +361,9 @@ func (ctx *SigningContext) SignEnveloped(el *etree.Element) (*etree.Element, err
 }
 
 func (ctx *SigningContext) GetSignatureMethodIdentifier() string {
-	if ident, ok := signatureMethodIdentifiers[ctx.Hash]; ok {
+	algo := ctx.getPublicKeyAlgorithm()
+
+	if ident, ok := signatureMethodIdentifiers[algo][ctx.Hash]; ok {
 		return ident
 	}
 	return ""
