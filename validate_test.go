@@ -217,11 +217,7 @@ func TestValidateWithEmptySignatureReference(t *testing.T) {
 	require.NotEmpty(t, reference)
 	require.Empty(t, reference.SelectAttr(URIAttr).Value)
 
-	testValidateDoc(t, doc, oktaCert)
-}
-
-func testValidateDoc(t *testing.T, doc *etree.Document, certPEM string) {
-	block, _ := pem.Decode([]byte(certPEM))
+	block, _ := pem.Decode([]byte(oktaCert))
 	cert, err := x509.ParseCertificate(block.Bytes)
 	require.NoError(t, err, "couldn't parse cert pem block")
 
@@ -426,5 +422,15 @@ func TestValidateECDSA(t *testing.T) {
 	sig := doc.FindElement("//" + SignatureTag)
 	require.NotEmpty(t, sig)
 
-	testValidateDoc(t, doc, ecdsaCert)
+	block, _ := pem.Decode([]byte(ecdsaCert))
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err, "couldn't parse cert pem block")
+
+	certStore := MemoryX509CertificateStore{
+		Roots: []*x509.Certificate{cert},
+	}
+	vc := NewDefaultValidationContext(&certStore)
+
+	_, err = vc.Validate(doc.Root())
+	require.ErrorIs(t, err, ErrBadCertificate)
 }

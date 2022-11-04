@@ -13,13 +13,24 @@ func TestSign(t *testing.T) {
 	randomKeyStore := RandomKeyStoreForTest()
 	ctx := NewDefaultSigningContext(randomKeyStore)
 
+	testSignWithContext(t, ctx, RSASHA256SignatureMethod, crypto.SHA256)
+}
+
+func TestNewSigningContext(t *testing.T) {
+	randomKeyStore := RandomKeyStoreByType(RSASHA256SignatureMethod)
+	ctx := NewDefaultSigningContext(randomKeyStore)
+
+	testSignWithContext(t, ctx, RSASHA256SignatureMethod, crypto.SHA256)
+}
+
+func testSignWithContext(t *testing.T, ctx *SigningContext, sigMethodID string, digestAlgo crypto.Hash) {
 	authnRequest := &etree.Element{
 		Space: "samlp",
 		Tag:   "AuthnRequest",
 	}
 	id := "_97e34c50-65ec-4132-8b39-02933960a96a"
 	authnRequest.CreateAttr("ID", id)
-	hash := crypto.SHA256.New()
+	hash := digestAlgo.New()
 	canonicalized, err := ctx.Canonicalizer.Canonicalize(authnRequest)
 	require.NoError(t, err)
 
@@ -49,7 +60,7 @@ func TestSign(t *testing.T) {
 
 	signatureMethodAttr := signatureMethodElement.SelectAttr(AlgorithmAttr)
 	require.NotEmpty(t, signatureMethodAttr)
-	require.Equal(t, "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256", signatureMethodAttr.Value)
+	require.Equal(t, sigMethodID, signatureMethodAttr.Value)
 
 	referenceElement := signedInfo.FindElement("//" + ReferenceTag)
 	require.NotEmpty(t, referenceElement)
@@ -73,7 +84,7 @@ func TestSign(t *testing.T) {
 
 	digestMethodAttr := digestMethodElement.SelectAttr(AlgorithmAttr)
 	require.NotEmpty(t, digestMethodElement)
-	require.Equal(t, "http://www.w3.org/2001/04/xmlenc#sha256", digestMethodAttr.Value)
+	require.Equal(t, digestAlgorithmIdentifiers[digestAlgo], digestMethodAttr.Value)
 
 	digestValueElement := referenceElement.FindElement("//" + DigestValueTag)
 	require.NotEmpty(t, digestValueElement)
@@ -175,4 +186,29 @@ func TestSignManifest(t *testing.T) {
 	require.NotEmpty(t, digestValueElement)
 	require.Equal(t, base64.StdEncoding.EncodeToString(digest), digestValueElement.Text())
 
+}
+
+func TestIncompatibleSignatureMethods(t *testing.T) {
+	// RSA
+	randomKeyStore := RandomKeyStoreForTest().(*MemoryX509KeyStore)
+	ctx := NewDefaultSigningContext(randomKeyStore)
+
+	err := ctx.SetSignatureMethod(ECDSASHA512SignatureMethod)
+	require.Error(t, err)
+
+	// ECDSA
+	ctx = NewDefaultSigningContext(RandomKeyStoreByType(ECDSASHA384SignatureMethod))
+	err = ctx.SetSignatureMethod(RSASHA1SignatureMethod)
+	require.Error(t, err)
+}
+
+func TestSignWithECDSA(t *testing.T) {
+
+	ctx := NewDefaultSigningContext(RandomKeyStoreByType(ECDSASHA384SignatureMethod))
+
+	method := ECDSASHA512SignatureMethod
+	err := ctx.SetSignatureMethod(method)
+	require.NoError(t, err)
+
+	testSignWithContext(t, ctx, method, crypto.SHA512)
 }
