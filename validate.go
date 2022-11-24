@@ -29,17 +29,8 @@ var (
 	ErrInvalidDigest     = errors.New("dsig: digest was broken")
 )
 
-func wrapError(err error) error {
-
-	if errors.Is(err, ErrMissingSignature) ||
-		errors.Is(err, ErrUnsupportedMethod) ||
-		errors.Is(err, ErrInvalidSignature) ||
-		errors.Is(err, ErrBadCertificate) ||
-		errors.Is(err, ErrInvalidDigest) {
-		return err
-	}
-	// by default wrap all unknow errors as invalid signature
-	return fmt.Errorf("%w: %v", ErrInvalidSignature, err)
+type CertificateVerifier interface {
+	VerifyKeyChain(x509data [][]byte) (*x509.Certificate, error)
 }
 
 type ValidationContext struct {
@@ -53,6 +44,19 @@ func NewDefaultValidationContext(certificateStore X509CertificateStore) *Validat
 		CertificateStore: certificateStore,
 		IdAttribute:      DefaultIdAttr,
 	}
+}
+
+func wrapError(err error) error {
+
+	if errors.Is(err, ErrMissingSignature) ||
+		errors.Is(err, ErrUnsupportedMethod) ||
+		errors.Is(err, ErrInvalidSignature) ||
+		errors.Is(err, ErrBadCertificate) ||
+		errors.Is(err, ErrInvalidDigest) {
+		return err
+	}
+	// by default wrap all unknow errors as invalid signature
+	return fmt.Errorf("%w: %v", ErrInvalidSignature, err)
 }
 
 // TODO(russell_h): More flexible namespace support. This might barely work.
@@ -379,6 +383,26 @@ func (ctx *ValidationContext) findSignature(root *etree.Element) (*types.Signatu
 func (ctx *ValidationContext) verifyCertificate(sig *types.Signature) (*x509.Certificate, error) {
 	now := ctx.Clock.Now()
 
+	var x509chain [][]byte
+
+	if sig.KeyInfo != nil {
+		// If the Signature includes KeyInfo, extract the certificates data from there
+		for idx := range sig.KeyInfo.X509Data.X509Certificates {
+			data, err := base64.StdEncoding.DecodeString(
+				whiteSpace.ReplaceAllString(sig.KeyInfo.X509Data.X509Certificates[idx].Data, ""))
+			if err != nil || len(data) == 0 {
+				return nil, fmt.Errorf("%w: failed to decode certificate: %v", ErrInvalidSignature, err)
+			}
+			x509chain = append(x509chain, data)
+		}
+	}
+
+	// If a certificate verifier interface is provided, use it to verify and return result immediately 
+	if verifier, ok := ctx.CertificateStore.(CertificateVerifier); ok {
+		return verifier.VerifyKeyChain(x509chain)
+	}
+
+	// Otherwise, use root certificates of this context 
 	roots, err := ctx.CertificateStore.Certificates()
 	if err != nil {
 		return nil, err
@@ -386,22 +410,11 @@ func (ctx *ValidationContext) verifyCertificate(sig *types.Signature) (*x509.Cer
 
 	var cert *x509.Certificate
 
-	if sig.KeyInfo != nil {
-		// If the Signature includes KeyInfo, extract the certificate from there
-		if len(sig.KeyInfo.X509Data.X509Certificates) == 0 || sig.KeyInfo.X509Data.X509Certificates[0].Data == "" {
-			return nil, fmt.Errorf("%w: missing X509Certificate within KeyInfo", ErrInvalidSignature)
-		}
-
-		certData, err := base64.StdEncoding.DecodeString(
-			whiteSpace.ReplaceAllString(sig.KeyInfo.X509Data.X509Certificates[0].Data, ""))
-		if err != nil {
-			return nil, fmt.Errorf("%w: failed to decode certificate: %v", ErrInvalidSignature, err)
-		}
-
-		cert, err = x509.ParseCertificate(certData)
+	if len(x509chain) > 0 {
+		cert, err = x509.ParseCertificate(x509chain[0])
 		if err != nil {
 			return nil, fmt.Errorf("%w: failed to parse certificate: %v", ErrInvalidSignature, err)
-		}
+		}	
 	} else {
 		// If the Signature doesn't have KeyInfo, Use the root certificate if there is only one
 		if len(roots) == 1 {
